@@ -23,7 +23,6 @@ from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (accuracy_score, confusion_matrix, precision_score, recall_score,
                              roc_auc_score)
-from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
@@ -150,14 +149,26 @@ def money(x):
 
 def main():
     df = clean(load())
+
+    # Time-based split: oldest 60% of arrivals train, next 20% validation (choose threshold),
+    # newest 20% test (report results). A random split would let the model learn from bookings
+    # that arrive after the ones it is tested on, which never happens in real use. The threshold
+    # is chosen on validation so the test result is not tuned to the test set.
+    df["arrival_date"] = pd.to_datetime(
+        df["arrival_date_year"].str.strip() + "-" + df["arrival_date_month"] + "-"
+        + df["arrival_date_day_of_month"].astype("Int64").astype(str),
+        format="%Y-%B-%d", errors="coerce")
+    df = df.dropna(subset=["arrival_date"]).sort_values("arrival_date", kind="stable")
     X, y = df[CATEGORICAL + NUMERIC], df["is_canceled"].astype(int)
 
-    # 60% train / 20% validation (choose threshold) / 20% test (report results).
-    # The threshold is chosen on validation so the test result is not tuned to the test set.
-    X_rest, X_test, y_rest, y_test = train_test_split(
-        X, y, test_size=0.2, stratify=y, random_state=SEED)
-    X_train, X_val, y_train, y_val = train_test_split(
-        X_rest, y_rest, test_size=0.25, stratify=y_rest, random_state=SEED)
+    val_cut, test_cut = int(len(df) * 0.6), int(len(df) * 0.8)
+    X_train, X_val, X_test = X.iloc[:val_cut], X.iloc[val_cut:test_cut], X.iloc[test_cut:]
+    y_train, y_val, y_test = y.iloc[:val_cut], y.iloc[val_cut:test_cut], y.iloc[test_cut:]
+    dates = df["arrival_date"]
+    print(f"Train:      arrivals {dates.iloc[0]:%d %b %Y} to {dates.iloc[val_cut - 1]:%d %b %Y}")
+    print(f"Validation: arrivals {dates.iloc[val_cut]:%d %b %Y} to {dates.iloc[test_cut - 1]:%d %b %Y}")
+    print(f"Test:       arrivals {dates.iloc[test_cut]:%d %b %Y} to {dates.iloc[-1]:%d %b %Y}")
+    print()
 
     fill_adr = X_train["adr"].median()
     val_value, test_value = booking_value(X_val, fill_adr), booking_value(X_test, fill_adr)
