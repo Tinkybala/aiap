@@ -16,7 +16,6 @@ from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (accuracy_score, confusion_matrix, precision_score, recall_score,
                              roc_auc_score)
-from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
@@ -97,10 +96,23 @@ def build_model():
 
 def main():
     df = clean(load())
+
+    # Time-based split: train on the oldest 80% of arrivals, test on the newest 20%.
+    # A random split would let the model learn from bookings that arrive after the ones it is
+    # tested on, which never happens in real use.
+    df["arrival_date"] = pd.to_datetime(
+        df["arrival_date_year"].str.strip() + "-" + df["arrival_date_month"] + "-"
+        + df["arrival_date_day_of_month"].astype("Int64").astype(str),
+        format="%Y-%B-%d", errors="coerce")
+    df = df.dropna(subset=["arrival_date"]).sort_values("arrival_date", kind="stable")
     X, y = df[CATEGORICAL + NUMERIC], df["is_canceled"].astype(int)
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, stratify=y, random_state=SEED)
+    cut = int(len(df) * 0.8)
+    X_train, X_test = X.iloc[:cut], X.iloc[cut:]
+    y_train, y_test = y.iloc[:cut], y.iloc[cut:]
+    print(f"Train: arrivals {df['arrival_date'].iloc[0]:%d %b %Y} to {df['arrival_date'].iloc[cut - 1]:%d %b %Y}")
+    print(f"Test:  arrivals {df['arrival_date'].iloc[cut]:%d %b %Y} to {df['arrival_date'].iloc[-1]:%d %b %Y}")
+    print()
 
     pipe = build_model().fit(X_train, y_train)
     proba = pipe.predict_proba(X_test)[:, 1]
